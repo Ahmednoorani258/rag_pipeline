@@ -21,6 +21,7 @@ retrieval_chain = generate_queries | retriever.map() | get_unique_union
 # print(len(docs))
 # RAG
 
+
 final_rag_chain = (
     {"context": retrieval_chain, 
      "question": itemgetter("question")} 

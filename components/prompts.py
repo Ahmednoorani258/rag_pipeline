@@ -14,7 +14,10 @@ database. By generating multiple perspectives on the user question, your goal is
 the user overcome some of the limitations of the distance-based similarity search. 
 Provide these alternative questions separated by newlines. Original question: {question}"""
 
-
+template = """You are a helpful assistant that generates multiple search queries based on a single input query. \n
+Generate multiple search queries related to: {question} \n
+Output (4 queries):"""
 
 questions_generator_prompt = ChatPromptTemplate.from_template(questions_generator_template)
 basic_prompt = ChatPromptTemplate.from_template(basic_template)
+prompt_rag_fusion = ChatPromptTemplate.from_template(template)

@@ -26,92 +26,172 @@ Quick start (Windows, uv)
 
 2) Install deps
    uv add langchain-core langchain-community langchain-text-splitters \
-          langchain-google-genai langchain-huggingface sentence-transformers \
-          chromadb tiktoken python-dotenv beautifulsoup4
+  langchain-google-genai langchain-huggingface sentence-transformers \
+# 31_rag_pipeline — Detailed README
 
-3) Run the final chain
-   uv run components/af_retrival_chain.py
+This repository is a compact, componentized Retrieval-Augmented Generation (RAG) example that demonstrates: web/document loading, token-aware splitting, creating embeddings, building a Chroma vector store, multi-query retrieval, Reciprocal Rank Fusion (RRF) reranking, and using Google Gemini as the LLM for grounded generation via LangChain LCEL constructs.
 
-Environment
-- GOOGLE_API_KEY: Gemini API key from Google AI Studio.
-- Optional: Disable LangSmith tracing globally with LANGCHAIN_TRACING_V2=false. If you enable it and use an org-scoped key, set LANGSMITH_WORKSPACE_ID to avoid errors.
+This README explains project structure, how each component works, how to run the code, configuration details, and recommended changes for open-source consumption.
 
-Pipeline overview
-1) Load documents (ab_retriever.py)
-   - Fetches https://lilianweng.github.io/posts/2023-06-23-agent/
-   - Uses bs4.SoupStrainer to keep only post-content/title/header.
-   - Produces blog_docs: list[Document].
-   - In this project, docs are provided by components/sampledoc.py.
+Table of contents
+- Project overview
+- Files & responsibilities
+- Setup & dependencies
+- Running the pipeline (examples)
+- How the multi-query + RRF flow works
+- Tuning RRF (`k`) and expected effects
+- Troubleshooting & common issues
+- Development notes, tests & contributing
+- License suggestion
 
-2) Split documents (ac_splitter.py)
-   - RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=500, overlap=100)
-   - Produces splits: list[Document] (metadata preserved).
-   - Token-aware splitting reduces truncation and improves retrieval quality.
+Project overview
+----------------
+The repo demonstrates a small RAG pipeline split into focused modules under `components/`. The data flow is:
 
-3) Build embeddings and vector store (ad_embeddings.py)
-   - Uses HuggingFaceEmbeddings("all-MiniLM-L6-v2")
-   - Chroma.from_documents(documents=splits, embedding=…)
-   - Exposes retriever = vectorstore.as_retriever(k=3)
-   Important: Ensure ad_embeddings imports splits from ac_splitter:
-   from ac_splitter import splits
+  - Document load (live web scraping example or `sampledoc.py`) -> split into chunks -> embed -> store in Chroma -> create a retriever.
+  - Query rewriting creates multiple candidate queries. Each query is executed against the retriever producing multiple ranked lists. These lists are fused using Reciprocal Rank Fusion (RRF) to form a single ranked candidate set. The top fused documents are passed into a final prompt and LLM to produce a grounded answer.
 
-4) Query generation and LLM (ae_generation.py)
-   - llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-   - questions_generator_prompt: rewrites the original question into 5 alternatives.
-   - generate_queries chain returns a list[str] via StrOutputParser + lambda x: x.split("\n")
-   - basic_prompt: your RAG answer template (must include {context} and {question}).
+          Files & responsibilities
+          ------------------------
+          components/ (core modules)
+          - `aa_tokenCounter.py` — small helper (cosine similarity helper in repo; not central to pipeline).
+          - `ab_retriever.py` — example Web loader using `WebBaseLoader` with BeautifulSoup's `SoupStrainer` to limit parsed HTML (produces `blog_docs`). Live scraping example; optional.
+          - `ac_splitter.py` — uses `RecursiveCharacterTextSplitter.from_tiktoken_encoder(...)` to split Documents token‑aware into `splits` (chunk_size=500, overlap=100).
+          - `ad_embeddings.py` — embeds `splits` with HuggingFace (`all-MiniLM-L6-v2`) and creates a Chroma vectorstore; exports `retriever`.
+          - `ae_generation.py` — sets up Gemini LLM runnable (`llm`), the question-rewriting runnables (`generate_queries`, `generate_queries_fusion`), and a basic RAG runnable. Uses `langchain_core` LCEL runnables (prompts, parsers, passthroughs).
+          - `af_retrival_chain.py` — single-query RAG example: rewrites -> `retriever.map()` -> dedupe -> `basic_prompt` -> `llm` -> print answer.
+          - `ag_rag_fusion.py` — multi-query retrieval + Reciprocal Rank Fusion (RRF) implementation; fuses multiple ranked lists then runs final prompt pipeline.
+          - `prompts.py` — central place for `basic_prompt`, `questions_generator_prompt`, and `prompt_rag_fusion` templates.
+          - `sampledoc.py` — development convenience: in-repo `docs` and `splits` populated from a long article (Lilian Weng blog post) so examples run without Internet.
 
-5) Retrieval + answer (af_retrival_chain.py)
-   - generate_queries | retriever.map() | get_unique_union
-     • Expands query, retrieves for each rewrite, then dedupes Documents.
-   - final_rag_chain maps:
-     { "context": retrieval_chain -> join docs into text, "question": original }
-     -> basic_prompt -> llm -> StrOutputParser
-   - Prints a grounded answer.
+          Setup & dependencies
+          --------------------
+          1) Create a project `.env` (root of repo) and DO NOT commit it. Example:
 
-Why you sometimes only see “five questions”
-- If you feed the “rewrite” prompt to the final stage, the LLM will output only the five rewrites.
-- Ensure final_rag_chain uses a prompt that references {context} and not the rewrite template.
+          ```dotenv
+          GOOGLE_API_KEY=your_gemini_api_key
+          LANGCHAIN_TRACING_V2=false
+          # Optional if using LangSmith tracing with an org-scoped key:
+          # LANGSMITH_WORKSPACE_ID=your_workspace_id
+          ```
 
-Expected wiring between files
-- ac_splitter.py exports: splits
-- ad_embeddings.py imports: from ac_splitter import splits
-- ae_generation.py exports: generate_queries and llm
-- af_retrival_chain.py imports: generate_queries, retriever, llm, basic_prompt
+          2) Install (recommended minimal list):
 
-Example answer prompt (prompts.py)
-- basic_prompt should include both placeholders:
-  "Use ONLY the context to answer. If unknown, say you don't know.\n\nContext:\n{context}\n\nQuestion: {question}"
+          ```cmd
+          pip install langchain-core langchain-google-genai langchain-community langchain-huggingface
+          pip install chromadb tiktoken sentence-transformers python-dotenv beautifulsoup4
+          ```
 
-Run targets
-- Load/split only:
-  uv run components/ac_splitter.py
-- Build embeddings/retriever:
-  uv run components/ad_embeddings.py
-- Generate rewrites (debug):
-  uv run components/ae_generation.py
-- Full RAG answer:
-  uv run components/af_retrival_chain.py
+          Notes
+          - This repo mixes `langchain_core` (LCEL) runnables and some community connectors; package names and import paths change between LangChain versions. If you see import errors, try installing `langchain-core` and `langchain-community`.
+          - If you cannot use Gemini or don't have a Google API key, you can switch `ad_embeddings.py` to use Hugging Face embeddings (already configured) and `ae_generation.py` to a local LLM (HuggingFace) or OpenAI (if you have a key).
 
-Troubleshooting
-- Import "langchain.prompts" unresolved:
-  Use from langchain_core.prompts import ChatPromptTemplate
+          Running the pipeline (examples)
+          ------------------------------
+          - Build splits only (uses `sampledoc` by default):
 
-- LangSmith error (org-scoped key/workspace):
-  Set LANGCHAIN_TRACING_V2=false or provide LANGSMITH_WORKSPACE_ID
+          ```cmd
+          python components/ac_splitter.py
+          ```
 
-- GOOGLE_API_KEY None / TypeError:
-  Ensure python-dotenv is installed and you call load_dotenv() before instantiating ChatGoogleGenerativeAI.
-  Do not set os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY") when it’s None.
+          - Build embeddings + retriever (ensure `ac_splitter.py` exports `splits`):
 
-- No retrieval results:
-  • Confirm ad_embeddings imports splits from ac_splitter
-  • Ensure sentence-transformers/all-MiniLM-L6-v2 downloads (internet access)
-  • Increase k or relax SoupStrainer in ab_retriever if using live scraping
+          ```cmd
+          python components/ad_embeddings.py
+          ```
 
-- Only five questions printed:
-  Use the answer prompt (basic_prompt) with {context} in af_retrival_chain.py, not the rewrite prompt.
+          - Run the single-query RAG example (rewrites -> dedupe -> answer):
 
-Security
-- Never commit real API keys. Rotate any keys you previously exposed in .env.
-- Prefer unquoted values in .env (e.g., LANGCHAIN_TRACING_V2=false).
+          ```cmd
+          python components/af_retrival_chain.py
+          ```
+
+          - Run the multi-query + RRF fusion example (fusion -> answer):
+
+          ```cmd
+          python components/ag_rag_fusion.py
+          ```
+
+          How the multi-query + RRF flow works (short)
+          ------------------------------------------
+          1. `generate_queries_fusion` (from `ae_generation.py`) expands the user question into multiple search queries (e.g., 4–5 rewrites).
+          2. `retriever.map()` runs the retriever for each rewritten query returning a list-of-lists: `[[docs_for_q1], [docs_for_q2], ...]`.
+          3. `reciprocal_rank_fusion(results, k=60)` takes these ranked lists and computes a fused score for each unique document using the formula:
+
+             contribution per appearance = 1 / (rank + k)
+
+             where `rank` is the 0-based position of the document within a particular list and `k` is a tunable offset.
+
+          4. Documents are sorted by fused score and the top-k are returned for grounding the final prompt.
+
+          Why RRF?
+          - RRF is rank-based (doesn't rely on raw similarity score scales) and rewards items that are consistently ranked well across multiple rewrites. It's robust when retrieval scores are not comparable across queries or when different retrievers are combined.
+
+          Choosing `k` (tuning)
+          ---------------------
+          - `k` controls how much advantage top positions get.
+          - Examples:
+            - `k=5` (small): rank differences matter a lot. Top‑1 positions provide large boosts.
+            - `k=60` (default in this repo): a balance between top-position preference and consensus.
+            - `k=200` (large): reduces top‑position dominance; favors consensus across lists.
+
+          Recommendation: run a small sweep (5, 20, 60, 150) on sample queries and inspect fused top-10 to pick a good `k`.
+
+          Troubleshooting & common issues
+          ------------------------------
+          - `GOOGLE_API_KEY` is None / TypeError: Make sure `.env` exists and `python-dotenv` is installed; call `load_dotenv()` before creating the Gemini client. Avoid assigning environment variables from None.
+          - LangSmith / tracing errors about org-scoped keys: either set `LANGSMITH_WORKSPACE_ID` or disable tracing with `LANGCHAIN_TRACING_V2=false` in `.env`.
+          - Pylance import warnings (`langchain.prompts` etc.): prefer `langchain_core.prompts` and `langchain_core.load` imports for newer LangChain packages; install `langchain-core`.
+          - Empty vector store: ensure `ad_embeddings.py` imports `splits` from `ac_splitter.py` (so splits are generated). If `splits` is empty, the Chroma collection will be empty.
+          - Only five questions printed (no final answer): ensure you're using the `basic_prompt` (with `{context}`) for the final answer, not the rewrite prompt. Also ensure final runnable chains are wired correctly in `af_retrival_chain.py` / `ag_rag_fusion.py`.
+          - Deduping instability: `dumps(doc)` is used to create keys — this can be brittle if metadata order changes. Prefer a stable key (e.g., `doc.metadata['id']` or SHA1 of `doc.page_content`).
+
+          Development notes & recommendations
+          -----------------------------------
+          - Make `k` configurable in `ag_rag_fusion.py` (function parameter or env var).
+          - Replace `dumps(doc)` dedupe with a stable key function:
+
+          ```py
+          import hashlib
+
+          def doc_key(doc):
+              return doc.metadata.get('id') or doc.metadata.get('source') or hashlib.sha1(doc.page_content.encode('utf-8')).hexdigest()
+          ```
+
+          - Add debug prints during development:
+
+          ```py
+          results = retrieval_chain_rag_fusion.invoke({"question": question})
+          print([len(lst) for lst in results])  # per-query retrieval sizes
+          ```
+
+          - Limit outputs in production (e.g., only return top-10 fused docs) for speed and clarity.
+
+          Contributing & open source readiness
+          ------------------------------------
+          - Add a `CONTRIBUTING.md` with how-tos for running the project locally and how to submit PRs.
+          - Add a `CODE_OF_CONDUCT.md` (e.g., Contributor Covenant) if you plan to accept community contributions.
+          - Add tests for critical parts (e.g., unit tests for `reciprocal_rank_fusion`, test data for retrieval format).
+          - Add a `requirements.txt` or `pyproject.toml` with pinned versions used during development.
+
+          License
+          -------
+          This project currently has no license file. For open source distribution consider one of:
+          - `MIT` (permissive)
+          - `Apache-2.0` (permissive + patent grant)
+
+          Add `LICENSE` with your preferred license and note it at the top of the README.
+
+          Appendix — small code pointers
+          -----------------------------
+          - Use `load_dotenv()` at script start in `ae_generation.py` and other entrypoint scripts.
+          - Ensure LCEL runnables return the shapes you expect: `generate_queries_fusion` should return `list[str]`, and `retriever.map()` should return `list[list[Document]]`.
+          - If you want to replace Gemini with another LLM, update `ae_generation.py` to create a different `llm` and keep runnables the same.
+
+          If you'd like, I can: 
+          - apply the stable-key + debug print patch to `ag_rag_fusion.py`,
+          - add a small unit test for `reciprocal_rank_fusion`, or
+          - produce a small demo script that shows the effect of different `k` values on synthetic ranked lists.
+
+          ---
+          Last updated: automatic README generation based on project files.
