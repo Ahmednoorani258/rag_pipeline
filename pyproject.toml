@@ -13,6 +13,8 @@ dependencies = [
     "langchain-huggingface>=1.0.1",
     "langchain-openai>=1.0.2",
     "langchainhub>=0.1.21",
+    "pytube>=15.0.0",
     "sentence-transformers>=5.1.2",
     "tiktoken>=0.12.0",
+    "youtube-transcript-api>=1.2.3",
 ]

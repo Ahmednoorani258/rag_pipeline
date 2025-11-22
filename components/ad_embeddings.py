@@ -3,11 +3,13 @@ from sampledoc import splits  # list[Document]
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
+embeddings = HuggingFaceEmbeddings(
+    model_name="all-MiniLM-L6-v2"
+)
+
 vectorstore = Chroma.from_documents(
     documents=splits,
-    embedding = HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2"
-    )
+    embedding = embeddings,
 )
 
 
