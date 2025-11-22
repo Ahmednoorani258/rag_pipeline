@@ -1,4 +1,4 @@
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
 
 basic_template = """Answer the following question based on this context:
 
@@ -44,8 +44,54 @@ Use the above context and any background question + answer pairs to answer the q
 """
 
 
+
+
+examples = [
+    {
+        "input": "Could the members of The Police perform lawful arrests?",
+        "output": "what can the members of The Police do?",
+    },
+    {
+        "input": "Jan Sindel’s was born in what country?",
+        "output": "what is Jan Sindel’s personal history?",
+    },
+]
+# We now transform these to example messages
+example_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("human", "{input}"),
+        ("ai", "{output}"),
+    ]
+)
+few_shot_prompt = FewShotChatMessagePromptTemplate(
+    example_prompt=example_prompt,
+    examples=examples,
+)
+
+
+response_prompt_template = """You are an expert of world knowledge. I am going to ask you a question. Your response should be comprehensive and not contradicted with the following context if they are relevant. Otherwise, ignore them if they are not relevant.
+
+# {normal_context}
+# {step_back_context}
+
+# Original Question: {question}
+# Answer:"""
+
 questions_generator_prompt = ChatPromptTemplate.from_template(questions_generator_template)
 basic_prompt = ChatPromptTemplate.from_template(basic_template)
 prompt_rag_fusion = ChatPromptTemplate.from_template(rag_fusion_template)
 prompt_queries_decomposition = ChatPromptTemplate.from_template(decomposition_queries_template)
 decomposition_prompt = ChatPromptTemplate.from_template(decomposition_template)
+stepback_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. Here are a few examples:""",
+        ),
+        # Few shot examples
+        few_shot_prompt,
+        # New question
+        ("user", "{question}"),
+    ]
+)
+stepback_response_prompt = ChatPromptTemplate.from_template(response_prompt_template)
