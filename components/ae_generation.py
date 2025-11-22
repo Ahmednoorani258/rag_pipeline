@@ -9,7 +9,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from sampledoc import docs
 from ad_embeddings import retriever
-from prompts import questions_generator_prompt, basic_prompt, prompt_rag_fusion, prompt_queries_decomposition,stepback_prompt
+from prompts import questions_generator_prompt, basic_prompt, prompt_rag_fusion, prompt_queries_decomposition,stepback_prompt, prompt_hyde
 
 
 
@@ -37,5 +37,9 @@ generate_queries = (questions_generator_prompt | llm | StrOutputParser() | (lamb
 generate_queries_fusion = ( prompt_rag_fusion  | llm | StrOutputParser()  | (lambda x: x.split("\n")))
 generate_queries_decomposition = ( prompt_queries_decomposition  | llm | StrOutputParser()  | (lambda x: x.split("\n")))
 generate_queries_step_back = stepback_prompt | llm | StrOutputParser()
+
+generate_docs_for_retrieval_hyde = (
+    prompt_hyde | llm | StrOutputParser() 
+)
 # res = rag_chain.invoke("What is short term memory?")
 # print(res)

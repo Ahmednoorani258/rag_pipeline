@@ -77,6 +77,11 @@ response_prompt_template = """You are an expert of world knowledge. I am going t
 # Original Question: {question}
 # Answer:"""
 
+# HyDE document generation
+hyde_template = """Please write a scientific paper passage to answer the question
+Question: {question}
+Passage:"""
+
 questions_generator_prompt = ChatPromptTemplate.from_template(questions_generator_template)
 basic_prompt = ChatPromptTemplate.from_template(basic_template)
 prompt_rag_fusion = ChatPromptTemplate.from_template(rag_fusion_template)
@@ -95,3 +100,4 @@ stepback_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 stepback_response_prompt = ChatPromptTemplate.from_template(response_prompt_template)
+prompt_hyde = ChatPromptTemplate.from_template(hyde_template)
